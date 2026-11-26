@@ -25,8 +25,36 @@ jobs:
           ARCH: arm64
           CROSS_COMPILE: aarch64-linux-gnu-
           JOBS: 2
-          # GCC 11+ flags legacy ARM64/MTK code under -Werror.
+          # Try to stop newer GCC warnings from failing the build.
           KCFLAGS: -Wno-error
+          # Keep going after a failure to show more errors.
+          MAKEFLAGS: -k
         run: |
-          bash ./build.sh
+          set -o pipefail
+          bash ./build.sh 2>&1 | tee build.log
           test -s out/acer_t482l/arch/arm64/boot/Image.gz
+
+      - name: Show real errors
+        if: failure()
+        run: |
+          if [ -f build.log ]; then
+            grep -nE -B5 'error:|\*\*\*|undefined reference|No rule to make|No such file' build.log | head -150 || echo "No matching lines. Check the full build.log."
+          else
+            echo "build.log was not created. Check the earlier steps."
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
+
+      - name: Upload kernel image
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image.gz
+          path: out/acer_t482l/arch/arm64/boot/Image.gz
+          if-no-files-found: error
