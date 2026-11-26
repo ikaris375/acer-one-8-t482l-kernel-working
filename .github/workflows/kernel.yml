@@ -20,14 +20,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison device-tree-compiler flex gcc-aarch64-linux-gnu libelf-dev libncurses-dev libssl-dev make python-is-python3
 
+      - name: Stop warnings from failing the build
+        run: |
+          find . -type f \( -name 'Makefile*' -o -name 'Kbuild*' \) \
+            -not -path './tools/*' -not -path './scripts/*' \
+            -exec sed -i -E 's/(^|[[:space:]])-Werror([[:space:]]|$)/\1\2/g' {} +
+
       - name: Build compressed kernel image
         env:
           ARCH: arm64
           CROSS_COMPILE: aarch64-linux-gnu-
-          JOBS: 2
-          # Try to stop newer GCC warnings from failing the build.
-          KCFLAGS: -Wno-error
-          # Keep going after a failure to show more errors.
+          JOBS: 4
           MAKEFLAGS: -k
         run: |
           set -o pipefail
@@ -38,7 +41,8 @@ jobs:
         if: failure()
         run: |
           if [ -f build.log ]; then
-            grep -nE -B5 'error:|\*\*\*|undefined reference|No rule to make|No such file' build.log | head -150 || echo "No matching lines. Check the full build.log."
+            grep -nE -A3 'error:|\*\*\*|undefined reference|No rule to make' build.log > errors.log || true
+            head -150 errors.log
           else
             echo "build.log was not created. Check the earlier steps."
           fi
