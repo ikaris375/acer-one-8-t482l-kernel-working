@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -55,10 +55,16 @@ jobs:
           path: build.log
           if-no-files-found: warn
 
-      - name: Upload kernel image
+      - name: Publish to Releases
         if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image.gz
-          path: out/acer_t482l/arch/arm64/boot/Image.gz
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          cp out/acer_t482l/arch/arm64/boot/Image.gz Image.gz
+          sha256sum Image.gz > Image.gz.sha256
+          gh release create "$TAG" Image.gz Image.gz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "Acer T482L kernel $TAG" \
+            --notes "Untested kernel build from commit $GITHUB_SHA. Kernel only, not a flashable boot.img." \
+            --prerelease
