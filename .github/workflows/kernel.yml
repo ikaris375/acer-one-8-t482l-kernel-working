@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -20,17 +20,44 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y bc bison device-tree-compiler flex gcc-aarch64-linux-gnu libelf-dev libncurses-dev libssl-dev make python-is-python3
 
+      - name: Stop warnings from failing the build
+        run: |
+          find . -type f \( -name 'Makefile*' -o -name 'Kbuild*' \) \
+            -not -path './tools/*' -not -path './scripts/*' \
+            -exec sed -i -E 's/(^|[[:space:]])-Werror([[:space:]]|$)/\1\2/g' {} +
+
       - name: Build kernel and boot.img
         env:
           ARCH: arm64
           CROSS_COMPILE: aarch64-linux-gnu-
-          JOBS: 2
-          # GCC 11+ flags legacy ARM64/MTK code under -Werror; keep warnings visible without failing CI.
+          JOBS: 4
+          # Keep going after a failure to show more errors.
+          MAKEFLAGS: -k
+          # GCC 11+ flags legacy ARM64/MTK code; keep warnings visible without failing CI.
           KCFLAGS: -Wno-error
         run: |
-          ./build.sh
+          set -o pipefail
+          bash ./build.sh 2>&1 | tee build.log
           test -s out/acer_t482l/arch/arm64/boot/Image.gz
           test -s out/acer_t482l/boot.img
+
+      - name: Show real errors
+        if: failure()
+        run: |
+          if [ -f build.log ]; then
+            grep -nE -A3 'error:|\*\*\*|undefined reference|No rule to make|Traceback' build.log > errors.log || true
+            head -150 errors.log
+          else
+            echo "build.log was not created. Check the earlier steps."
+          fi
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: warn
 
       - name: Upload Image.gz and boot.img
         uses: actions/upload-artifact@v4
@@ -39,3 +66,19 @@ jobs:
           path: |
             out/acer_t482l/arch/arm64/boot/Image.gz
             out/acer_t482l/boot.img
+          if-no-files-found: error
+
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: build-${{ github.run_number }}-${{ github.run_attempt }}
+        run: |
+          mkdir -p release
+          cp out/acer_t482l/arch/arm64/boot/Image.gz out/acer_t482l/boot.img release/
+          (cd release && sha256sum Image.gz boot.img > SHA256SUMS.txt)
+          gh release create "$TAG" \
+            release/boot.img release/Image.gz release/SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "Acer T482L kernel $TAG" \
+            --notes "Automated build from commit $GITHUB_SHA. Not verified on a device. For Acer One 8 T482L only. Back up your boot partition before flashing." \
+            --prerelease
